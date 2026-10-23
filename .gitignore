@@ -16,6 +16,9 @@ __pycache__/
 .pytest_cache/
 *.pyc
 
+# created by nix build
+result/
+
 # plan v0.3 P1 (repository hygiene, review E1): profiler captures and large diagnostic dumps stay out of git.
 *.nsys-rep
 
