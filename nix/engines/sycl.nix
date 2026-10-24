@@ -33,14 +33,10 @@ stdenv.mkDerivation {
   nativeBuildInputs = [python3 cmake ninja makeWrapper];
   buildInputs = [zlib] ++ lib.filter (p: p != null) [onemkl level-zero];
 
-  installPhase = ''
-    runHook preInstall
-    mkdir -p $out/engine
-    cp strata $out/engine/strata
-
-    ${
+  # The vision reader compiles after the engine's normal cmake-hook build (postBuild); the
+  # default buildPhase stays untouched.
+  postBuild =
     lib.optionalString (withVision && intel-llvm != null) ''
-      # the picture reader (strata-vision-sycl), from tools/vision in this checkout
       cmake -S $src/tools/vision -B build-vision -G Ninja \
         ${lib.concatStringsSep " " [
         "-DCMAKE_BUILD_TYPE=Release"
@@ -51,10 +47,17 @@ stdenv.mkDerivation {
         "-DCMAKE_CXX_COMPILER=${intel-llvm}/bin/icpx"
       ]}
       cmake --build build-vision --target strata-vision -j
+    '';
+
+  installPhase = ''
+    runHook preInstall
+    mkdir -p $out/engine
+    cp strata $out/engine/strata
+    ${lib.optionalString (withVision && intel-llvm != null) ''
+      # stage the reader beside the engine; package_engine.py picks it up when it writes the manifest
       cp build-vision/strata-vision-sycl $out/engine/strata-vision-sycl 2>/dev/null ||
         cp build-vision/strata-vision $out/engine/strata-vision-sycl
-    ''
-    }
+    ''}
 
     python3 $src/packaging/package_engine.py --src $out/engine \
       --out $out --backend sycl --version ${version} \

@@ -36,6 +36,18 @@ stdenv.mkDerivation {
 
   buildInputs = [zlib cuda];
 
+  # The vision reader compiles after the engine's normal cmake-hook build (postBuild runs inside
+  # the unchanged default buildPhase), so the hook's own parallel build logic is untouched.
+  # withVision=false removes the whole block: the build is then exactly the plain engine's.
+  postBuild =
+    lib.optionalString withVision ''
+      cmake -S $src/tools/vision -B build-vision -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DSTRATA_PORTABLE=ON \
+        -DLLAMA_DIR=${llama-cpp.src} -DSTRATA_VISION_CUDA=ON \
+        -DCMAKE_CUDA_ARCHITECTURES=${lib.concatStringsSep ";" arch}
+      cmake --build build-vision --target strata-vision -j
+    '';
+
   installPhase = let
     manifestArches =
       lib.concatMap
@@ -55,12 +67,8 @@ stdenv.mkDerivation {
       cp libstrata_kq.so $out/engine/ 2>/dev/null || true
     ''
     + lib.optionalString withVision ''
-      cmake -S $src/tools/vision -B build-vision -G Ninja \
-      -DCMAKE_BUILD_TYPE=Release -DSTRATA_PORTABLE=ON \
-      -DLLAMA_DIR=${llama-cpp.src} -DSTRATA_VISION_CUDA=ON \
-
-      cmake --build build-vision --target strata-vision -j
-      cp build-vision/strata-vision .
+      # stage the reader beside the engine; package_engine.py's wanted() picks it up
+      cp build-vision/strata-vision strata-vision
     ''
     + ''
       python3 $src/packaging/package_engine.py --src . \

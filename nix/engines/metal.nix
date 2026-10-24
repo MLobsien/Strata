@@ -32,19 +32,24 @@ in
     nativeBuildInputs = [cmake ninja makeWrapper];
     buildInputs = [zlib];
 
+    # The vision reader compiles after the engine's normal cmake-hook build (postBuild); the
+    # default buildPhase stays untouched.
+    postBuild =
+      lib.optionalString withVision ''
+        cmake -S $src/tools/vision -B build-vision -G Ninja \
+          -DSTRATA_VISION_METAL=ON -DCMAKE_BUILD_TYPE=Release \
+          -DSTRATA_PORTABLE=ON -DLLAMA_DIR=${llama-cpp.src}
+        cmake --build build-vision --target strata-vision -j
+      '';
+
     installPhase =
       ''
         runHook preInstall
         mkdir -p $out/engine
         cp strata $out/engine/strata
-
       ''
       + lib.optionalString withVision ''
-        cmake -S $src/tools/vision -B build-vision -G Ninja \
-        -DSTRATA_VISION_METAL=ON -DCMAKE_BUILD_TYPE=Release \
-        -DSTRATA_PORTABLE=ON -DLLAMA_DIR=${llama-cpp.src}
-
-        cmake --build build-vision --target strata-vision -j
+        # stage the reader beside the engine; package_engine.py's wanted() picks it up
         cp build-vision/strata-vision $out/engine/strata-vision
       '';
 
