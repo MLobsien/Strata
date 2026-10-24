@@ -33,9 +33,19 @@ stdenv.mkDerivation {
   nativeBuildInputs = [python3 cmake ninja makeWrapper];
   buildInputs = [zlib] ++ lib.filter (p: p != null) [onemkl level-zero];
 
-  # The vision reader compiles after the engine's normal cmake-hook build (postBuild); the
-  # default buildPhase stays untouched.
-  postBuild =
+  # The build override: the normal ninja engine build (same shape as the ninja hook's
+  # buildPhase: parallel cores, ninjaFlags), then the vision reader's own cmake configure/build
+  # when withVision (and the toolchain) is on. Install stays staging-only.
+  buildPhase = ''
+    runHook preBuild
+
+    local buildCores=$NIX_BUILD_CORES
+    local flagsArray=("-j$buildCores")
+    concatTo flagsArray ninjaFlags ninjaFlagsArray
+    echoCmd 'build flags' "''${flagsArray[@]}"
+    TERM=dumb ninja "''${flagsArray[@]}"
+
+    ${
     lib.optionalString (withVision && intel-llvm != null) ''
       cmake -S $src/tools/vision -B build-vision -G Ninja \
         ${lib.concatStringsSep " " [
@@ -47,7 +57,10 @@ stdenv.mkDerivation {
         "-DCMAKE_CXX_COMPILER=${intel-llvm}/bin/icpx"
       ]}
       cmake --build build-vision --target strata-vision -j
-    '';
+    ''
+    }
+    runHook postBuild
+  '';
 
   installPhase = ''
     runHook preInstall

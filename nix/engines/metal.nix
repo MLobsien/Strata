@@ -32,15 +32,28 @@ in
     nativeBuildInputs = [cmake ninja makeWrapper];
     buildInputs = [zlib];
 
-    # The vision reader compiles after the engine's normal cmake-hook build (postBuild); the
-    # default buildPhase stays untouched.
-    postBuild =
+    # The build override: the normal ninja engine build (same shape as the ninja hook's
+    # buildPhase: parallel cores, ninjaFlags), then the vision reader's own cmake configure/build
+    # when withVision is on. Install stays staging-only.
+    buildPhase = ''
+      runHook preBuild
+
+      local buildCores=$NIX_BUILD_CORES
+      local flagsArray=("-j$buildCores")
+      concatTo flagsArray ninjaFlags ninjaFlagsArray
+      echoCmd 'build flags' "''${flagsArray[@]}"
+      TERM=dumb ninja "''${flagsArray[@]}"
+
+      ${
       lib.optionalString withVision ''
         cmake -S $src/tools/vision -B build-vision -G Ninja \
           -DSTRATA_VISION_METAL=ON -DCMAKE_BUILD_TYPE=Release \
           -DSTRATA_PORTABLE=ON -DLLAMA_DIR=${llama-cpp.src}
         cmake --build build-vision --target strata-vision -j
-      '';
+      ''
+      }
+      runHook postBuild
+    '';
 
     installPhase =
       ''

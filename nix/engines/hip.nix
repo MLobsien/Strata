@@ -43,22 +43,35 @@ in
 
     buildInputs = [zlib] ++ runtime;
 
-    # The vision reader compiles after the engine's normal cmake-hook build (postBuild); the
-    # default buildPhase stays untouched. arch names are gfx<nnn> with no real/virtual concept.
-    postBuild =
+    # The build override: the normal ninja engine build (same shape as the ninja hook's
+    # buildPhase: parallel cores, ninjaFlags), then the vision reader's own cmake configure/build
+    # when withVision is on. Install stays staging-only.
+    buildPhase = ''
+      runHook preBuild
+
+      local buildCores=$NIX_BUILD_CORES
+      local flagsArray=("-j$buildCores")
+      concatTo flagsArray ninjaFlags ninjaFlagsArray
+      echoCmd 'build flags' "''${flagsArray[@]}"
+      TERM=dumb ninja "''${flagsArray[@]}"
+
+      ${
       lib.optionalString withVision ''
         cmake -S $src/tools/vision -B build-vision -G Ninja \
           ${lib.concatStringsSep " " [
-            "-DCMAKE_BUILD_TYPE=Release"
-            "-DSTRATA_PORTABLE=ON"
-            "-DLLAMA_DIR=${llama-cpp.src}"
-            "-DSTRATA_VISION_HIP=ON"
-            "-DCMAKE_C_COMPILER=${hipcc}/bin/hipcc"
-            "-DCMAKE_CXX_COMPILER=${hipcc}/bin/hipcc"
-            "-DSTRATA_VISION_HIP_ARCHS=${lib.concatStringsSep ";" arch}"
-          ]}
+          "-DCMAKE_BUILD_TYPE=Release"
+          "-DSTRATA_PORTABLE=ON"
+          "-DLLAMA_DIR=${llama-cpp.src}"
+          "-DSTRATA_VISION_HIP=ON"
+          "-DCMAKE_C_COMPILER=${hipcc}/bin/hipcc"
+          "-DCMAKE_CXX_COMPILER=${hipcc}/bin/hipcc"
+          "-DSTRATA_VISION_HIP_ARCHS=${lib.concatStringsSep ";" arch}"
+        ]}
         cmake --build build-vision --target strata-vision -j
-      '';
+      ''
+      }
+      runHook postBuild
+    '';
 
     installPhase = let
       archArgs = lib.concatStringsSep " " (map (a: "--arch ${a}") arch);

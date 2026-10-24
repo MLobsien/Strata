@@ -36,17 +36,32 @@ stdenv.mkDerivation {
 
   buildInputs = [zlib cuda];
 
-  # The vision reader compiles after the engine's normal cmake-hook build (postBuild runs inside
-  # the unchanged default buildPhase), so the hook's own parallel build logic is untouched.
-  # withVision=false removes the whole block: the build is then exactly the plain engine's.
-  postBuild =
+  # The build phase override: the normal cmake+ninja engine build first (the same shape the
+  # ninja hook's ninjaBuildPhase runs: parallel cores, ninjaFlags), then the vision reader's
+  # own cmake configure/build when withVision is on. install stays staging-only.
+  buildPhase = ''
+    runHook preBuild
+
+    local buildCores=1
+    if [ "''${enableParallelBuilding}" ] || [ -z "''${enableParallelBuilding-1}" ]; then
+      buildCores="$NIX_BUILD_CORES"
+    fi
+    local flagsArray=("-j$buildCores")
+    concatTo flagsArray ninjaFlags ninjaFlagsArray
+    echoCmd 'build flags' "''${flagsArray[@]}"
+    TERM=dumb ninja "''${flagsArray[@]}"
+
+    ${
     lib.optionalString withVision ''
       cmake -S $src/tools/vision -B build-vision -G Ninja \
         -DCMAKE_BUILD_TYPE=Release -DSTRATA_PORTABLE=ON \
         -DLLAMA_DIR=${llama-cpp.src} -DSTRATA_VISION_CUDA=ON \
         -DCMAKE_CUDA_ARCHITECTURES=${lib.concatStringsSep ";" arch}
       cmake --build build-vision --target strata-vision -j
-    '';
+    ''
+    }
+    runHook postBuild
+  '';
 
   installPhase = let
     manifestArches =
