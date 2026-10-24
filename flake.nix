@@ -25,23 +25,26 @@
     # The gcc that this nvcc supports as its host compiler.
     stdenv = cudaPackages.backendStdenv;
 
-    # The engine backends, one flake attr per backend; see nix/strata-engines.nix for the layout.
-    # SYCL is eval-only until someone intentionally starts its build (intel-llvm src-builds LLVM:
-    # hours); the CUDA engine keeps its old default.
-    strata-engine-cuda = pkgs.callPackage ./nix/strata-engine-cuda.nix {};
-    # The sycl backend; its toolchain is overridable (see nix/strata-engine-sycl.nix: intel-llvm src-builds
-    # LLVM for hours, later derivations may pin a binary oneAPI release instead).
-    strata-engine-sycl = pkgs.callPackage ./nix/strata-engine-sycl.nix {};
-    # Documentation-only index of the engines (a plain attrset, nothing is built by it):
-    strata-engines = {
-      cuda = strata-engine-cuda;
-      inherit strata-engine-sycl;
-      # Apple Silicon's engine deliberately has no derivation on a Linux nixpkgs instance:
-      # metal/CMakeLists.txt FATAL_ERRORs on any non-Apple platform, and the honest answer is
-      # "use a Mac nixpkgs (or the packaging/mac recipes)", not a derivation that never builds.
-      # metal = null;   # See the comment block in nix/strata-engines.nix.
+    version = "0.1.48";
+    strata-engine-cuda = pkgs.callPackage ./nix/engine/cuda.nix {
+      inherit
+        version
+        stdenv
+        cuda
+        ;
     };
-    strata-cli = pkgs.callPackage ./nix/strata-cli.nix {strata-engine = strata-engine-cuda;};
+    strata-engine-sycl = pkgs.callPackage ./nix/engine/sycl.nix {inherit version;};
+    strata-terminal = pkgs.callPackage ./nix/terminal.nix {inherit version;};
+
+    # Apple Silicon: a separate plain nixpkgs instance (no CUDA config needed) and the Metal engine.
+    # The Metal project's own CMake gate (metal/CMakeLists.txt FATAL_ERRORs outside APPLE) keeps this
+    # from ever materialising as a Linux build; eval-checked from this Linux host only.
+    pkgsDarwin = import nixpkgs {
+      system = "aarch64-darwin";
+      config.allowUnfree = true;
+    };
+    strata-engine-metal = pkgsDarwin.callPackage ./nix/engine/metal.nix {inherit version;};
+    strata-terminal-mac = pkgsDarwin.callPackage ./nix/terminal.nix {inherit version;};
   in {
     devShells."${system}" = {
       default = (pkgs.mkShell.override {inherit stdenv;}) {
@@ -49,10 +52,7 @@
           # ./setup.sh: makes .venv and runs setup.py
           python3
 
-          # setup.py's engine build. cmake/ninja from PATH: the pip wheels' binaries do not run on NixOS.
-          cuda
-          cmake
-          ninja
+          # setup.py's engine build. cmake/ninja from PATH: the pip wheels' binaries do not run on NixOS. cuda cmake ninja
         ];
 
         shellHook = ''
@@ -66,10 +66,14 @@
     };
 
     packages.${system} = {
-      default = strata-cli;
-      inherit strata-engine-cuda strata-engine-sycl strata-cli;
-      # The engine index is a documentation attrset, not a package: it lives beside packages, not in them.
-      # (strata-engines = { cuda; sycl; metal = documented refusal }) at the top of this file.
+      default = strata-terminal;
+      inherit strata-engine-cuda strata-engine-sycl strata-terminal;
+    };
+
+    # Apple Silicon: the Metal engine and the terminal, built on a Mac (aarch64-darwin).
+    packages.aarch64-darwin = {
+      default = strata-terminal-mac;
+      inherit strata-engine-metal strata-terminal-mac;
     };
   };
 }
