@@ -42,13 +42,14 @@ stdenv.mkDerivation {
     lib.optionalString (withVision && intel-llvm != null) ''
       # the picture reader (strata-vision-sycl), from tools/vision in this checkout
       cmake -S $src/tools/vision -B build-vision -G Ninja \
-        ${lib.concatStringsSep " " ((import ./vision-flags.nix {inherit lib;}).flags {
-          backend = "sycl";
-          cuda = null;
-          hipcc = null;
-          intel-llvm = intel-llvm;
-          llama-cpp = llama-cpp;
-        })}
+        ${lib.concatStringsSep " " [
+        "-DCMAKE_BUILD_TYPE=Release"
+        "-DSTRATA_PORTABLE=ON"
+        "-DLLAMA_DIR=${llama-cpp.src}"
+        "-DSTRATA_VISION_SYCL=ON"
+        "-DCMAKE_C_COMPILER=${intel-llvm}/bin/icx"
+        "-DCMAKE_CXX_COMPILER=${intel-llvm}/bin/icpx"
+      ]}
       cmake --build build-vision --target strata-vision -j
       cp build-vision/strata-vision-sycl $out/engine/strata-vision-sycl 2>/dev/null ||
         cp build-vision/strata-vision $out/engine/strata-vision-sycl

@@ -15,11 +15,10 @@
 {
   version ? "",
   withVision ? true,
-  # e.g. ["gfx1100" "gfx1201"]; empty keeps the project's own default
   arch ? [],
   lib,
   stdenv,
-  rocmPackages ? null,   # callPackage auto-supplies rocmPackages where available; leave unset elsewhere
+  rocmPackages ? null, # callPackage auto-supplies rocmPackages where available; leave unset elsewhere
   llama-cpp,
   makeWrapper,
   python3,
@@ -29,13 +28,12 @@
   zlib,
   ...
 }: let
-  rocmSet = rocmPackages;  # callPackage fills it from the calling pkgs' rocmPackages
+  rocmSet = rocmPackages; # callPackage fills it from the calling pkgs' rocmPackages
   # The HIP compiler (hipcc -> clang) nixpkgs' rocmPackages carries; rocBLAS gives the prompt path
   # its GEMMs and hipBLASLt its tuned solution tables.
   hipcc = rocmSet.clr;
   runtime = [rocmSet.clr rocmSet.rocblas rocmSet.hipblaslt];
 in
-  assert lib.assertMsg (rocmSet != null) "strata-engine-hip: this nixpkgs exposes no rocmPackages; pass one explicitly (rocmPackages arg)";
   stdenv.mkDerivation {
     name = "strata-engine-hip";
     src = ../..;
@@ -45,13 +43,11 @@ in
       "-DCMAKE_BUILD_TYPE=Release"
       "-DSTRATA_GGML_DIR=${llama-cpp.src}"
       "-DSTRATA_ENABLE_HIP=ON"
-      # HIP's compiler: nixpkgs' clr package puts hipcc in bin/.
       "-DCMAKE_C_COMPILER=${hipcc}/bin/hipcc"
       "-DCMAKE_CXX_COMPILER=${hipcc}/bin/hipcc"
-      # engine package: no parity tests (the release recipe's default for a package)
       "-DSTRATA_BUILD_TESTS=OFF"
-    ]
-    ++ lib.optional (arch != []) "-DCMAKE_HIP_ARCHITECTURES=${lib.concatStringsSep ";" arch}";
+      "-DCMAKE_HIP_ARCHITECTURES=${lib.concatStringsSep ";" arch}"
+    ];
 
     nativeBuildInputs = [
       makeWrapper
@@ -73,19 +69,22 @@ in
       cp libstrata_kq.so $out/engine/ 2>/dev/null || true
 
       ${
-      lib.optionalString withVision ''
-        # the AMD picture reader (strata-vision-hip), arch-matched from tools/vision in this checkout
-        cmake -S $src/tools/vision -B build-vision -G Ninja \
-          ${lib.concatStringsSep " " ((import ./vision-flags.nix {inherit lib;}).flags {
-            backend = "hip";
-            inherit arch;
-            hipcc = hipcc;
-            llama-cpp = llama-cpp;
-          })}
-        cmake --build build-vision --target strata-vision -j
-        cp build-vision/strata-vision-hip $out/engine/strata-vision-hip 2>/dev/null ||
-          cp build-vision/strata-vision $out/engine/strata-vision-hip
-      ''
+        lib.optionalString withVision ''
+          # the AMD picture reader (strata-vision-hip), arch-matched from tools/vision in this checkout
+          cmake -S $src/tools/vision -B build-vision -G Ninja \
+            ${lib.concatStringsSep " " [
+            "-DCMAKE_BUILD_TYPE=Release"
+            "-DSTRATA_PORTABLE=ON"
+            "-DLLAMA_DIR=${llama-cpp.src}"
+            "-DSTRATA_VISION_HIP=ON"
+            "-DCMAKE_C_COMPILER=${hipcc}/bin/hipcc"
+            "-DCMAKE_CXX_COMPILER=${hipcc}/bin/hipcc"
+            "-DSTRATA_VISION_HIP_ARCHS=${lib.concatStringsSep ";" arch}"
+          ]}
+          cmake --build build-vision --target strata-vision -j
+          cp build-vision/strata-vision-hip $out/engine/strata-vision-hip 2>/dev/null ||
+            cp build-vision/strata-vision $out/engine/strata-vision-hip
+        ''
       }
 
       python3 $src/packaging/package_engine.py --src $out/engine \

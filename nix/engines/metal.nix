@@ -21,7 +21,7 @@ in
     src = ../..;
     inherit version;
 
-    configureScript = "$src/metal";   # absolute: the metal/ subproject of this source checkout
+    configureScript = "$src/metal";
     cmakeFlags = [
       "-DCMAKE_BUILD_TYPE=Release"
       "-DMETAL_CPP_DIR=${metal-cpp}/metal-cpp_26"
@@ -32,33 +32,23 @@ in
     nativeBuildInputs = [cmake ninja makeWrapper];
     buildInputs = [zlib];
 
-    installPhase = ''
-      runHook preInstall
-      mkdir -p $out/engine
-      cp strata $out/engine/strata
+    installPhase =
+      ''
+        runHook preInstall
+        mkdir -p $out/engine
+        cp strata $out/engine/strata
 
-      ${
-      lib.optionalString withVision ''
-        # the Mac picture reader (strata-vision), from tools/vision in this checkout; macOS only,
-        # so the withVision gate here never fires on a Linux evaluation path
+      ''
+      + lib.optionalString withVision ''
         cmake -S $src/tools/vision -B build-vision -G Ninja \
-          ${lib.concatStringsSep " " ((import ./vision-flags.nix {inherit lib;}).flags {
-            backend = "metal";
-            cuda = null;
-            hipcc = null;
-            intel-llvm = null;
-            llama-cpp = llama-cpp;
-          })}
+        -DSTRATA_VISION_METAL=ON -DCMAKE_BUILD_TYPE=Release \
+        -DSTRATA_PORTABLE=ON -DLLAMA_DIR=${llama-cpp.src}
+
         cmake --build build-vision --target strata-vision -j
         cp build-vision/strata-vision $out/engine/strata-vision
-      ''
-      }
-
-      runHook postInstall
-    '';
+      '';
 
     postFixup = ''
-      # the engine dlopens nothing beyond Apple's own frameworks; a plain wrapper suffices
       wrapProgram $out/engine/strata
     '';
 
