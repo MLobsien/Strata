@@ -32,9 +32,6 @@ in
     nativeBuildInputs = [cmake ninja makeWrapper];
     buildInputs = [zlib];
 
-    # The build override: the normal ninja engine build (same shape as the ninja hook's
-    # buildPhase: parallel cores, ninjaFlags), then the vision reader's own cmake configure/build
-    # when withVision is on. Install stays staging-only.
     buildPhase = ''
       runHook preBuild
 
@@ -45,33 +42,42 @@ in
       TERM=dumb ninja "''${flagsArray[@]}"
 
       ${
-      lib.optionalString withVision ''
-        cmake -S $src/tools/vision -B build-vision -G Ninja \
-          -DSTRATA_VISION_METAL=ON -DCMAKE_BUILD_TYPE=Release \
-          -DSTRATA_PORTABLE=ON -DLLAMA_DIR=${llama-cpp.src}
-        cmake --build build-vision --target strata-vision -j
-      ''
+        lib.optionalString withVision ''
+          cmake -S $src/tools/vision -B build-vision -G Ninja \
+            -DSTRATA_VISION_METAL=ON -DCMAKE_BUILD_TYPE=Release \
+            -DSTRATA_PORTABLE=ON -DLLAMA_DIR=${llama-cpp.src}
+          cmake --build build-vision --target strata-vision -j
+        ''
       }
       runHook postBuild
     '';
 
-    installPhase =
-      ''
-        runHook preInstall
-        mkdir -p $out/engine
-        cp strata $out/engine/strata
+    installPhase = ''
+      mkdir -p $out/engine
 
-        # BUILD.json: the engine's build record (metal/setup_mac.py line 147's write after its build).
-        printf '{"version": "%s", "source": "nix/engines/metal.nix", "backend": "metal"}\n' \
-          "${version}" > BUILD.json
-      ''
-      + lib.optionalString withVision ''
-        # stage the reader beside the engine; package_engine.py's wanted() picks it up
-        cp build-vision/strata-vision $out/engine/strata-vision
-      '';
+      ${lib.optionalString withVision ''
+        cp vision-build/bin/strata-vision .
+      ''}
+
+      python3 $src/packaging/package_engine.py --src . \
+        --out $out/engine --backend metal --version ${version} \
+        --platform darwin-arm64
+    '';
 
     postFixup = ''
-      wrapProgram $out/engine/strata
+      wrap() {
+        wrapProgram $1 \
+         --prefix LD_LIBRARY_PATH : /run/opengl-driver/lib:${lib.makeLibraryPath [stdenv.cc.cc.lib zlib]}
+      }
+      wrap $out/engine/*/strata
+      ${lib.optionalString withVision ''
+        wrap $out/engine/*/strata-vision
+      ''}
+
+      substituteInPlace $out/engine/*/engine-component.json \
+        --replace '"path": "strata"' '"path": ".strata-wrapped"' ${
+        lib.optionalString withVision ''--replace '"path": "strata-vision"' '"path": ".strata-vision-wrapped"' ''
+      }
     '';
 
     meta = {

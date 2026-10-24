@@ -14,9 +14,11 @@
   zlib,
   ...
 }: let
-  rocmSet = rocmPackages;
-  hipcc = rocmSet.clr;
-  runtime = [hipcc rocmSet.rocblas rocmSet.hipblaslt];
+  hipcc = rocmPackages.clr;
+  runtime = with rocmPackages; [clr rocblas hipblaslt];
+
+  mkArchList = lib.concatStringsSep ";";
+  archs = mkArchList arch;
 in
   stdenv.mkDerivation {
     name = "strata-engine-hip";
@@ -30,7 +32,7 @@ in
       "-DCMAKE_C_COMPILER=${hipcc}/bin/hipcc"
       "-DCMAKE_CXX_COMPILER=${hipcc}/bin/hipcc"
       "-DSTRATA_BUILD_TESTS=OFF"
-      "-DCMAKE_HIP_ARCHITECTURES=${lib.concatStringsSep ";" arch}"
+      "-DCMAKE_HIP_ARCHITECTURES=${archs}"
     ];
 
     nativeBuildInputs = [
@@ -44,13 +46,11 @@ in
     buildInputs = [zlib] ++ runtime;
 
     buildPhase = ''
-      # runHook preBuild
-      #
-      # local buildCores=$NIX_BUILD_CORES
-      # local flagsArray=("-j$buildCores")
-      # concatTo flagsArray ninjaFlags ninjaFlagsArray
-      # echoCmd 'build flags' "''${flagsArray[@]}"
-      # TERM=dumb ninja "''${flagsArray[@]}"
+      local buildCores=$NIX_BUILD_CORES
+      local flagsArray=("-j$buildCores")
+      concatTo flagsArray ninjaFlags ninjaFlagsArray
+      echoCmd 'build flags' "''${flagsArray[@]}"
+      TERM=dumb ninja "''${flagsArray[@]}"
 
       ${
         lib.optionalString withVision ''
@@ -62,27 +62,33 @@ in
             "-DSTRATA_VISION_HIP=ON"
             "-DCMAKE_C_COMPILER=${hipcc}/bin/hipcc"
             "-DCMAKE_CXX_COMPILER=${hipcc}/bin/hipcc"
-            "-DSTRATA_VISION_HIP_ARCHS=${lib.concatStringsSep ";" arch}"
+            "-DSTRATA_VISION_HIP_ARCHS=${archs}"
           ]}
           cmake --build build-vision --target strata-vision -j
         ''
       }
-      # runHook postBuild
     '';
 
     installPhase = ''
       mkdir -p $out/engine
-      ${lib.optionalString withVision ''
-        cp build-vision/strata-vision-hip $out/engine/strata-vision-hip 2>/dev/null ||
-          cp build-vision/strata-vision $out/engine/strata-vision-hip
-      ''}
 
-      # BUILD.json: the engine's build record (packaging/build_hip_linux.sh's heredoc after its build).
-      printf '{"version": "%s", "source": "nix/engines/hip.nix", "archs": "%s", "rocm": "%s", "portable": true}\n' \
-        "${version}" \
-        "${lib.concatStringsSep ";" arch}" \
-        "${rocmPackages.clr.version or "unknown"}" \
-        > BUILD.json
+      cp engine-build/strata .
+      cp engine-build/libstrata_kq.so .
+
+      python3 $src/packaging/collect_libs.py --binary strata \
+        --search ${rocmPackages}/lib \
+        --search ${rocmPackages.clr}/lib \
+        --out .
+
+      echo '${lib.toJSON {
+        inherit version archs;
+        source = "nix/engines/hip.nix";
+        rocm = hipcc.version;
+      }}' > BUILD.json
+
+      ${lib.optionalString withVision ''
+        cp vision-build/bin/strata-vision .
+      ''}
 
       python3 $src/packaging/package_engine.py --src . \
         --out $out/engine --backend hip --version ${version} \
@@ -90,8 +96,19 @@ in
     '';
 
     postFixup = ''
-      wrapProgram $out/engine/*/strata \
-        --prefix LD_LIBRARY_PATH : /run/opengl-driver/lib:${lib.makeLibraryPath ([stdenv.cc.cc.lib zlib] ++ runtime)}
+      wrap() {
+        wrapProgram $1 \
+         --prefix LD_LIBRARY_PATH : /run/opengl-driver/lib:${lib.makeLibraryPath ([stdenv.cc.cc.lib zlib] ++ runtime)}
+      }
+      wrap $out/engine/*/strata
+      ${lib.optionalString withVision ''
+        wrap $out/engine/*/strata-vision
+      ''}
+
+      substituteInPlace $out/engine/*/engine-component.json \
+        --replace '"path": "strata"' '"path": ".strata-wrapped"' ${
+        lib.optionalString withVision ''--replace '"path": "strata-vision"' '"path": ".strata-vision-wrapped"' ''
+      }
     '';
 
     meta = with lib; {

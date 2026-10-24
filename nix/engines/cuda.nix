@@ -14,17 +14,13 @@
   zlib,
   ...
 }: let
-  mkBare = a: lib.removeSuffix "-virtual" (lib.removeSuffix "-real" a);
+  strip = a: lib.removeSuffix "-virtual" (lib.removeSuffix "-real" a);
+  mkArchList = lib.concatStringsSep ";";
 in
   stdenv.mkDerivation {
-    name = "strata-engine";
+    name = "strata-engine-cuda";
     src = ../..;
     inherit version;
-
-    # Skip the cmake hook's configure: nothing it does for this project survives it (in-dir cd
-    # semantics, hard-coded install paths, injected flags, the -GNinja duplication) and the phases
-    # below take explicit absolute flags instead. The parallel-core count is honoured by -j.
-    dontUseCmakeConfigure = true;
 
     nativeBuildInputs = [
       makeWrapper
@@ -36,8 +32,10 @@ in
 
     buildInputs = [zlib cuda];
 
-    buildPhase = ''
-      cudaArchFlag="-DCMAKE_CUDA_ARCHITECTURES=${lib.concatStringsSep ";" arch}"
+    buildPhase = let
+      archFlags = mkArchList arch;
+    in ''
+      cudaArchFlag="-DCMAKE_CUDA_ARCHITECTURES=${archFlags}"
       cmake -S . -B engine-build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DSTRATA_GGML_DIR=${llama-cpp.src} \
@@ -48,7 +46,6 @@ in
 
       ${
         lib.optionalString withVision ''
-          cudaArchFlag="-DCMAKE_CUDA_ARCHITECTURES=${lib.concatStringsSep ";" arch}"
           cmake -S $src/tools/vision -B vision-build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DSTRATA_PORTABLE=ON \
             -DLLAMA_DIR=${llama-cpp.src} -DSTRATA_VISION_CUDA=ON \
@@ -63,7 +60,7 @@ in
       manifestArches =
         lib.concatMap
         (a: let
-          bare = lib.removeSuffix "-virtual" (lib.removeSuffix "-real" a);
+          bare = strip a;
         in
           if lib.hasSuffix "-virtual" a
           then ["compute_${bare}"]
@@ -74,31 +71,21 @@ in
       cp engine-build/strata .
       cp engine-build/libstrata_kq.so .
 
-      cp ${cuda}/lib/libcublas.so.13 ${cuda}/lib/libcublasLt.so.13 \
-        ${cuda}/lib/libcudart.so.13 .
+      python3 $src/packaging/collect_libs.py --binary strata \
+        --search ${cuda}/lib --out .
 
       ${lib.optionalString withVision ''
         cp vision-build/bin/strata-vision .
 
         echo '${let
-          archs = lib.concatStringsSep ";" (map (a: lib.removeSuffix "-virtual" (lib.removeSuffix "-real" a)) arch);
+          archs = mkArchList (map strip arch);
         in
           builtins.toJSON {
-            inherit version;
+            inherit version archs;
             cuda = cuda.version;
+            vision_archs = archs;
           }}' > BUILD.json
       ''}
-
-      # BUILD.json: the engine's build record (what packaging/build_cuda_linux.sh writes after its
-      # build; package_engine.py copies it into the package, and check_picture_reader reads
-      # vision_archs to confirm the reader covers the engine's cards, #3669). archs here is the
-      # manifest's vocabulary (the -real/-virtual suffixes stripped).
-      printf '{"version": "%s", "source": "nix/engines/cuda.nix", "archs": "%s", "cuda": "%s", "portable": true, "vision_archs": "%s"}\n' \
-        "${version}" \
-        "${lib.concatStringsSep ";" (map (a: lib.removeSuffix "-virtual" (lib.removeSuffix "-real" a)) arch)}" \
-        "${cuda.version}" \
-        "${lib.concatStringsSep ";" (map (a: lib.removeSuffix "-virtual" (lib.removeSuffix "-real" a)) arch)}" \
-        > BUILD.json
 
       python3 $src/packaging/package_engine.py --src . \
         --out $out/engine --backend cuda --version ${version} \
@@ -107,15 +94,28 @@ in
     '';
 
     postFixup = ''
-      wrapProgram $out/engine/*/strata $out/engine/*/strata-vision \
-      --prefix CUDA_HOME : ${cuda} \
-      --prefix CUDA_PATH : ${cuda} \
-      --prefix CUDAHOSTCXX : ${stdenv.cc}/bin/c++ \
-      --prefix LD_LIBRARY_PATH : /run/opengl-driver/lib:${lib.makeLibraryPath [stdenv.cc.cc.lib zlib]}
+      wrap() {
+        wrapProgram $1   \
+        --prefix CUDA_HOME : ${cuda} \
+        --prefix CUDA_PATH : ${cuda} \
+        --prefix CUDAHOSTCXX : ${stdenv.cc}/bin/c++ \
+        --prefix LD_LIBRARY_PATH : /run/opengl-driver/lib:${lib.makeLibraryPath [stdenv.cc.cc.lib zlib]}
+      }
+      wrap $out/engine/*/strata
+      ${lib.optionalString withVision ''
+        wrap $out/engine/*/strata-vision
+      ''}
 
       substituteInPlace $out/engine/*/engine-component.json \
-        --replace '"path": "strata"' '"path": ".strata-wrapped" ${
+        --replace '"path": "strata"' '"path": ".strata-wrapped"' ${
         lib.optionalString withVision ''--replace '"path": "strata-vision"' '"path": ".strata-vision-wrapped"' ''
       }
     '';
+
+    meta = with lib; {
+      description = "Strata's CUDA engine";
+      license = licenses.mit;
+      maintainers = [];
+      mainProgram = "strata";
+    };
   }
