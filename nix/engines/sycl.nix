@@ -1,6 +1,6 @@
 {
   version ? "",
-  withVision ? false,   # the sycl reader exists (STRATA_VISION_SYCL) but oneMKL is not in nixpkgs; off by default here
+  withVision ? false,
   lib,
   stdenv,
   cmake,
@@ -19,9 +19,7 @@ stdenv.mkDerivation {
 
   src = ../..;
 
-  # The SYCL port is its own CMake project under sycl/, not the repo root; the cmake hook takes
-  # the source root via configureScript (this file sits in nix/, so ../sycl from its build dir).
-  configureScript = "$src/sycl";   # absolute: the sycl/ subproject of this source checkout
+  configureScript = "$src/sycl";
   cmakeFlags = [
     "-DCMAKE_BUILD_TYPE=Release"
     "-DCMAKE_C_COMPILER=${intel-llvm}/bin/icx"
@@ -33,31 +31,28 @@ stdenv.mkDerivation {
   nativeBuildInputs = [python3 cmake ninja makeWrapper];
   buildInputs = [zlib] ++ lib.filter (p: p != null) [onemkl level-zero];
 
-  # The build override: the normal ninja engine build (same shape as the ninja hook's
-  # buildPhase: parallel cores, ninjaFlags), then the vision reader's own cmake configure/build
-  # when withVision (and the toolchain) is on. Install stays staging-only.
   buildPhase = ''
-    runHook preBuild
-
-    local buildCores=$NIX_BUILD_CORES
-    local flagsArray=("-j$buildCores")
-    concatTo flagsArray ninjaFlags ninjaFlagsArray
-    echoCmd 'build flags' "''${flagsArray[@]}"
-    TERM=dumb ninja "''${flagsArray[@]}"
+    # runHook preBuild
+    #
+    # local buildCores=$NIX_BUILD_CORES
+    # local flagsArray=("-j$buildCores")
+    # concatTo flagsArray ninjaFlags ninjaFlagsArray
+    # echoCmd 'build flags' "''${flagsArray[@]}"
+    # TERM=dumb ninja "''${flagsArray[@]}"
 
     ${
-    lib.optionalString (withVision && intel-llvm != null) ''
-      cmake -S $src/tools/vision -B build-vision -G Ninja \
-        ${lib.concatStringsSep " " [
-        "-DCMAKE_BUILD_TYPE=Release"
-        "-DSTRATA_PORTABLE=ON"
-        "-DLLAMA_DIR=${llama-cpp.src}"
-        "-DSTRATA_VISION_SYCL=ON"
-        "-DCMAKE_C_COMPILER=${intel-llvm}/bin/icx"
-        "-DCMAKE_CXX_COMPILER=${intel-llvm}/bin/icpx"
-      ]}
-      cmake --build build-vision --target strata-vision -j
-    ''
+      lib.optionalString (withVision && intel-llvm != null) ''
+        cmake -S $src/tools/vision -B build-vision -G Ninja \
+          ${lib.concatStringsSep " " [
+          "-DCMAKE_BUILD_TYPE=Release"
+          "-DSTRATA_PORTABLE=ON"
+          "-DLLAMA_DIR=${llama-cpp.src}"
+          "-DSTRATA_VISION_SYCL=ON"
+          "-DCMAKE_C_COMPILER=${intel-llvm}/bin/icx"
+          "-DCMAKE_CXX_COMPILER=${intel-llvm}/bin/icpx"
+        ]}
+        cmake --build build-vision --target strata-vision -j
+      ''
     }
     runHook postBuild
   '';
@@ -72,6 +67,12 @@ stdenv.mkDerivation {
         cp build-vision/strata-vision $out/engine/strata-vision-sycl
     ''}
 
+    # BUILD.json: the engine's build record (packaging/build_sycl_linux.sh line 54's echo).
+    printf '{"version": "%s", "source": "nix/engines/sycl.nix", "sycl": "DPC++ via intel-llvm %s", "portable": false}\n' \
+      "${version}" \
+      "${intel-llvm.version or "unknown"}" \
+      > BUILD.json
+
     python3 $src/packaging/package_engine.py --src $out/engine \
       --out $out --backend sycl --version ${version} \
       --platform linux-x86_64
@@ -80,7 +81,7 @@ stdenv.mkDerivation {
 
   postFixup = ''
     wrapProgram $out/engine/strata \
-      --prefix LD_LIBRARY_PATH : /run/opengl-driver/lib:${lib.makeLibraryPath (lib.filter (p: p != null) [level-zero])}
+      --prefix LD_LIBRARY_PATH : /run/opengl-driver/lib:${lib.makeLibraryPath (lib.filter (p: p != null) [stdenv.cc.cc.lib zlib level-zero])}
   '';
 
   meta = with lib; {

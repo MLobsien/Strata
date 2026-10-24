@@ -60,6 +60,10 @@ in
         runHook preInstall
         mkdir -p $out/engine
         cp strata $out/engine/strata
+
+        # BUILD.json: the engine's build record (metal/setup_mac.py line 147's write after its build).
+        printf '{"version": "%s", "source": "nix/engines/metal.nix", "backend": "metal"}\n' \
+          "${version}" > BUILD.json
       ''
       + lib.optionalString withVision ''
         # stage the reader beside the engine; package_engine.py's wanted() picks it up
