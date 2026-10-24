@@ -26,15 +26,21 @@
     stdenv = cudaPackages.backendStdenv;
 
     version = "0.1.48";
-    strata-engine-cuda = pkgs.callPackage ./nix/engine/cuda.nix {
+    strata-engine-cuda = pkgs.callPackage ./nix/engines/cuda.nix {
       inherit
         version
         stdenv
         cuda
         ;
     };
-    strata-engine-sycl = pkgs.callPackage ./nix/engine/sycl.nix {inherit version;};
+    strata-engine-sycl = pkgs.callPackage ./nix/engines/sycl.nix {inherit version;};
+    strata-engine-hip = pkgs.callPackage ./nix/engines/hip.nix {inherit version;};
     strata-terminal = pkgs.callPackage ./nix/terminal.nix {inherit version;};
+
+    # The desktop app (Tauri shell + node host). Eval-only until the lock hashes are filled in;
+    # the package marks itself broken=true until a first real build records them.
+    strata-app = pkgs.callPackage ./nix/app.nix {inherit version;};
+    strata-app-mac = pkgsDarwin.callPackage ./nix/app.nix {inherit version;};
 
     # Apple Silicon: a separate plain nixpkgs instance (no CUDA config needed) and the Metal engine.
     # The Metal project's own CMake gate (metal/CMakeLists.txt FATAL_ERRORs outside APPLE) keeps this
@@ -43,7 +49,7 @@
       system = "aarch64-darwin";
       config.allowUnfree = true;
     };
-    strata-engine-metal = pkgsDarwin.callPackage ./nix/engine/metal.nix {inherit version;};
+    strata-engine-metal = pkgsDarwin.callPackage ./nix/engines/metal.nix {inherit version;};
     strata-terminal-mac = pkgsDarwin.callPackage ./nix/terminal.nix {inherit version;};
   in {
     devShells."${system}" = {
@@ -67,13 +73,14 @@
 
     packages.${system} = {
       default = strata-terminal;
-      inherit strata-engine-cuda strata-engine-sycl strata-terminal;
+      inherit strata-engine-cuda strata-engine-sycl strata-engine-hip strata-terminal;
+      inherit strata-app;
     };
 
-    # Apple Silicon: the Metal engine and the terminal, built on a Mac (aarch64-darwin).
+    # Apple Silicon: the Metal engine, the terminal and the app, built on a Mac (aarch64-darwin).
     packages.aarch64-darwin = {
       default = strata-terminal-mac;
-      inherit strata-engine-metal strata-terminal-mac;
+      inherit strata-engine-metal strata-terminal-mac strata-app-mac;
     };
   };
 }

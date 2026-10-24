@@ -1,4 +1,6 @@
 {
+  version ? "",
+  withVision ? false,   # the sycl reader exists (STRATA_VISION_SYCL) but oneMKL is not in nixpkgs; off by default here
   lib,
   stdenv,
   cmake,
@@ -19,7 +21,7 @@ stdenv.mkDerivation {
 
   # The SYCL port is its own CMake project under sycl/, not the repo root; the cmake hook takes
   # the source root via configureScript (this file sits in nix/, so ../sycl from its build dir).
-  configureScript = "../sycl";
+  configureScript = "$src/sycl";   # absolute: the sycl/ subproject of this source checkout
   cmakeFlags = [
     "-DCMAKE_BUILD_TYPE=Release"
     "-DCMAKE_C_COMPILER=${intel-llvm}/bin/icx"
@@ -35,6 +37,27 @@ stdenv.mkDerivation {
     runHook preInstall
     mkdir -p $out/engine
     cp strata $out/engine/strata
+
+    ${
+    lib.optionalString (withVision && intel-llvm != null) ''
+      # the picture reader (strata-vision-sycl), from tools/vision in this checkout
+      cmake -S $src/tools/vision -B build-vision -G Ninja \
+        ${lib.concatStringsSep " " ((import ./vision-flags.nix {inherit lib;}).flags {
+          backend = "sycl";
+          cuda = null;
+          hipcc = null;
+          intel-llvm = intel-llvm;
+          llama-cpp = llama-cpp;
+        })}
+      cmake --build build-vision --target strata-vision -j
+      cp build-vision/strata-vision-sycl $out/engine/strata-vision-sycl 2>/dev/null ||
+        cp build-vision/strata-vision $out/engine/strata-vision-sycl
+    ''
+    }
+
+    python3 $src/packaging/package_engine.py --src $out/engine \
+      --out $out --backend sycl --version ${version} \
+      --platform linux-x86_64
     runHook postInstall
   '';
 
