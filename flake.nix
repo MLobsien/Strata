@@ -24,27 +24,24 @@
     cuda = cudaPackages.cudatoolkit;
     # The gcc that this nvcc supports as its host compiler.
     stdenv = cudaPackages.backendStdenv;
-    # Keep two instances of nixpkgs: one with CUDA for the engine, one plain for everything else, because
-    # config.cudaSupport = true makes the whole package set pull the CUDA toolkit (and needs allowUnfree).
-    pkgsNoCuda = import nixpkgs {
-      inherit system;
-      config.allowUnfree = true;
-      config.cudaSupport = false;
-    };
 
-    strata = pkgs.callPackage ./. {};
-
-    # The Python CLI / server (strata.py and its three libraries). Pure Python, no CUDA, no machine code.
-    # Two flavours: strata-cli is stdlib-only; strata-cli-full adds the packages `strata serve` imports.
-    # callPackage supplies stdenv/python3/makeWrapper/lib from pkgsNoCuda; the python packages for the
-    # server's imports come from pkgsNoCuda.python3Packages, passed explicitly because callPackage
-    # cannot see inside the callPackage'd python3.withPackages (the withPackages lambda's
-    # arguments are a fresh scope, not the outer one).
-    strata-cli = pkgsNoCuda.callPackage ./nix/strata-cli.nix {addDeps = false;};
-    strata-cli-full = pkgsNoCuda.callPackage ./nix/strata-cli.nix {
-      addDeps = true;
-      inherit (pkgsNoCuda.python3Packages) numpy jinja2 pyyaml requests psutil pillow regex truststore;
+    # The engine backends, one flake attr per backend; see nix/strata-engines.nix for the layout.
+    # SYCL is eval-only until someone intentionally starts its build (intel-llvm src-builds LLVM:
+    # hours); the CUDA engine keeps its old default.
+    strata-engine-cuda = pkgs.callPackage ./nix/strata-engine-cuda.nix {};
+    # The sycl backend; its toolchain is overridable (see nix/strata-engine-sycl.nix: intel-llvm src-builds
+    # LLVM for hours, later derivations may pin a binary oneAPI release instead).
+    strata-engine-sycl = pkgs.callPackage ./nix/strata-engine-sycl.nix {};
+    # Documentation-only index of the engines (a plain attrset, nothing is built by it):
+    strata-engines = {
+      cuda = strata-engine-cuda;
+      inherit strata-engine-sycl;
+      # Apple Silicon's engine deliberately has no derivation on a Linux nixpkgs instance:
+      # metal/CMakeLists.txt FATAL_ERRORs on any non-Apple platform, and the honest answer is
+      # "use a Mac nixpkgs (or the packaging/mac recipes)", not a derivation that never builds.
+      # metal = null;   # See the comment block in nix/strata-engines.nix.
     };
+    strata-cli = pkgs.callPackage ./nix/strata-cli.nix {strata-engine = strata-engine-cuda;};
   in {
     devShells."${system}" = {
       default = (pkgs.mkShell.override {inherit stdenv;}) {
@@ -69,12 +66,10 @@
     };
 
     packages.${system} = {
-      default = strata;
-      inherit strata;
-      # CPU-only engine: no CUDA toolkit in the build, no -DSTRATA_ENABLE_CUDA (the CMake default).
-      # Useful for CI and for machines without a supported GPU; it cannot serve models by itself.
-      strata-cpu = strata.override {cudaSupport = false;};
-      inherit strata-cli strata-cli-full;
+      default = strata-cli;
+      inherit strata-engine-cuda strata-engine-sycl strata-cli;
+      # The engine index is a documentation attrset, not a package: it lives beside packages, not in them.
+      # (strata-engines = { cuda; sycl; metal = documented refusal }) at the top of this file.
     };
   };
 }
