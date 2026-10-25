@@ -16,7 +16,6 @@
   webkitgtk_4_1,
   gtk3,
   glib-networking,
-  # bundled-harness,
   ...
 }: let
   host = stdenvNoCC.mkDerivation {
@@ -27,9 +26,7 @@
 
     nativeBuildInputs = [nodejs];
     npmDeps = fetchNpmDeps {
-      src = ./..;
-      sha256 = lib.fakeSha256;
-      sourceRoot = "apps";
+      src = ./../apps/host;
     };
 
     buildPhase = ''
@@ -50,8 +47,9 @@ in
     src = ./..;
 
     cargoDeps = rustPlatform.fetchCargoVendor {
-      cargoRoot = "apps/desktop/src-tauri";
-      sha256 = lib.fakeSha256;
+      # cargoRoot = "apps/desktop/src-tauri";
+      src = ../apps/desktop/src-tauri;
+      hash = "sha256-${builtins.concatStringsSep "" (builtins.genList (_: "0") 43)}";
     };
 
     preConfigure = ''
@@ -77,7 +75,6 @@ in
       ln -s ${nodejs}/bin/node $out/resources/node/node
       ln -s ${strata-terminal}/${strata-terminal.passthru.sitePackages} $out/resources/control
       ln -s ${strata-engine}/engine $out/engine-bundle
-      # cp -r ${bundled-harness} $out/resources/harness
     '';
 
     meta = with lib; {

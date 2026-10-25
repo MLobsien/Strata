@@ -1,10 +1,3 @@
-# The Strata Terminal / CLI package for nix.
-#
-# packaging/package_terminal.py is the layout authority for the distributed archive, but its staged
-# bundle embeds a standalone CPython that cannot execute inside this sandbox (it expects the FHS
-# /lib64 loader). This derivation replicates the script's --skip-deps staging in plain bash, using
-# nix's python3 plus the runtime deps (the wrapper interpreter below): what the APP path needs is the
-# staged control tree, not a runnable embedded interpreter. The launcher and prying deps come from nix.
 {
   version ? "0.2.3",
   lib,
@@ -41,9 +34,7 @@ in
     dontConfigure = true;
     dontBuild = true;
 
-    # The payload lists verbatim from packaging/package_terminal.py (PAYLOAD, TOOLS_SUBSET,
-    # INSTALLER_FILES): a staged tree is what the desktop app's installPhase symlinks as
-    # resources/control, via passthru.sitePackages.
+    # The payload lists verbatim from packaging/package_terminal.py (PAYLOAD, TOOLS_SUBSET, INSTALLER_FILES)
     installPhase = ''
       dst=$out/${sitePackages}
       mkdir -p $dst $out/bin
@@ -76,7 +67,7 @@ in
       install -Dm644 setup.py "$dst/setup.py"
       install -Dm644 ref/load.py "$dst/ref/load.py"
       for item in strata_mcp iq_pack strata_pack pack_index mtp_fetch mtp_pack mtp_rt draft_vocab \
-                  strata_tokenizer gguf_reader calibrate; do
+          strata_tokenizer gguf_reader calibrate; do
         install -m644 "tools/$item.py" "$dst/tools/$item.py"
       done
       cp -r --no-preserve=mode,ownership data $dst/data

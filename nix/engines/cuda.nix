@@ -32,6 +32,8 @@ in
 
     buildInputs = [zlib cuda];
 
+    dontConfigure = true;
+
     buildPhase = let
       archFlags = mkArchList arch;
     in ''

@@ -36,21 +36,22 @@
     strata-engine-sycl = pkgs.callPackage ./nix/engines/sycl.nix {inherit version;};
     strata-engine-hip = pkgs.callPackage ./nix/engines/hip.nix {inherit version;};
     strata-terminal = pkgs.callPackage ./nix/terminal.nix {inherit version;};
+    strata-app = pkgs.callPackage ./nix/app.nix {
+      inherit version strata-terminal;
+      strata-engine = strata-engine-cuda;
+    };
 
-    # The desktop app (Tauri shell + node host). Eval-only until the lock hashes are filled in;
-    # the package marks itself broken=true until a first real build records them.
-    strata-app = pkgs.callPackage ./nix/app.nix {inherit version;};
-    strata-app-mac = pkgsDarwin.callPackage ./nix/app.nix {inherit version;};
-
-    # Apple Silicon: a separate plain nixpkgs instance (no CUDA config needed) and the Metal engine.
-    # The Metal project's own CMake gate (metal/CMakeLists.txt FATAL_ERRORs outside APPLE) keeps this
-    # from ever materialising as a Linux build; eval-checked from this Linux host only.
     pkgsDarwin = import nixpkgs {
       system = "aarch64-darwin";
       config.allowUnfree = true;
     };
     strata-engine-metal = pkgsDarwin.callPackage ./nix/engines/metal.nix {inherit version;};
     strata-terminal-mac = pkgsDarwin.callPackage ./nix/terminal.nix {inherit version;};
+    strata-app-mac = pkgsDarwin.callPackage ./nix/app.nix {
+      inherit version;
+      strata-terminal = strata-terminal-mac;
+      strata-engine = strata-engine-metal;
+    };
   in {
     devShells."${system}" = {
       default = (pkgs.mkShell.override {inherit stdenv;}) {
@@ -73,11 +74,9 @@
 
     packages.${system} = {
       default = strata-terminal;
-      inherit strata-engine-cuda strata-engine-sycl strata-engine-hip strata-terminal;
-      inherit strata-app;
+      inherit strata-engine-cuda strata-engine-sycl strata-engine-hip strata-terminal strata-app;
     };
 
-    # Apple Silicon: the Metal engine, the terminal and the app, built on a Mac (aarch64-darwin).
     packages.aarch64-darwin = {
       default = strata-terminal-mac;
       inherit strata-engine-metal strata-terminal-mac strata-app-mac;
